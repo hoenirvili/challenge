@@ -1,4 +1,4 @@
-package main
+package discovery
 
 import (
 	"bytes"
@@ -15,7 +15,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type discovery struct {
+const (
+	broadcastAddress      = "255.255.255.255:8829"
+	localBroadcastAddress = ":8829"
+)
+
+type Discovery struct {
 	name          []byte
 	localAddr     string
 	advertisement []byte
@@ -24,12 +29,38 @@ type discovery struct {
 	peers         map[string]string
 }
 
-const (
-	broadcastAddress      = "255.255.255.255:8829"
-	localBroadcastAddress = ":8829"
-)
+func New(name, localAddr string, logger *slog.Logger) *Discovery {
+	d := &Discovery{
+		name:          []byte(name),
+		localAddr:     strings.Split(localAddr, ":")[0],
+		advertisement: []byte(name + " " + localAddr),
+		peers:         make(map[string]string),
+		logger:        logger,
+	}
+	go d.broadcasting()
+	go d.collectPeers()
+	return d
+}
 
-func (c *discovery) broadcasting() error {
+func (c *Discovery) Write(p []byte) (n int, err error) {
+	tokens := bytes.SplitN(p, []byte(" "), 2)
+	name, amount := tokens[0], tokens[1]
+	c.mu.Lock()
+	addr, ok := c.peers[string(name)]
+	c.mu.Unlock()
+	if !ok {
+		return 0, errors.New("peer not connected")
+	}
+	var peer net.Conn
+	peer, err = net.Dial("udp4", addr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to dial, %w", err)
+	}
+	defer peer.Close()
+	return peer.Write(amount)
+}
+
+func (c *Discovery) broadcasting() error {
 	broadcast, err := net.Dial("udp", broadcastAddress)
 	if err != nil {
 		return fmt.Errorf("failed to allocate broadcast address, %w", err)
@@ -48,24 +79,24 @@ func (c *discovery) broadcasting() error {
 }
 
 func control(_, _ string, c syscall.RawConn) error {
-	var opErr error
+	var operr error
 	err := c.Control(func(fd uintptr) {
-		opErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
-		if opErr != nil {
+		operr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
+		if operr != nil {
 			return
 		}
-		opErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
-		if opErr != nil {
+		operr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
+		if operr != nil {
 			return
 		}
 	})
 	if err != nil {
 		return err
 	}
-	return opErr
+	return operr
 }
 
-func (c *discovery) collectPeers() error {
+func (c *Discovery) collectPeers() error {
 	conf := net.ListenConfig{Control: control}
 	conn, err := conf.ListenPacket(context.Background(), "udp4", localBroadcastAddress)
 	if err != nil {
@@ -93,36 +124,4 @@ func (c *discovery) collectPeers() error {
 		}
 		c.mu.Unlock()
 	}
-}
-
-func newDiscovery(name, localAddr string, logger *slog.Logger) *discovery {
-	d := &discovery{
-		name:          []byte(name),
-		localAddr:     strings.Split(localAddr, ":")[0],
-		advertisement: []byte(name + " " + localAddr),
-		peers:         make(map[string]string),
-		logger:        logger,
-	}
-	go d.broadcasting()
-	go d.collectPeers()
-	return d
-
-}
-
-func (c *discovery) Write(p []byte) (n int, err error) {
-	tokens := bytes.SplitN(p, []byte(" "), 2)
-	name, amount := tokens[0], tokens[1]
-	c.mu.Lock()
-	addr, ok := c.peers[string(name)]
-	c.mu.Unlock()
-	if !ok {
-		return 0, errors.New("peer not connected")
-	}
-	var peer net.Conn
-	peer, err = net.Dial("udp4", addr)
-	if err != nil {
-		return 0, fmt.Errorf("failed to dial, %w", err)
-	}
-	defer peer.Close()
-	return peer.Write(amount)
 }

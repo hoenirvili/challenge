@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
+	"github.com/hoenirvili/challenge/balance"
+	"github.com/hoenirvili/challenge/discovery"
+	"github.com/hoenirvili/challenge/keyboard"
 )
 
 func main() {
@@ -31,14 +35,13 @@ func main() {
 		opts.Level = slog.LevelDebug
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, opts))
-
-	discovery := newDiscovery(name, addr, logger)
-	manager := newManager(addr, logger)
-
+	kbd := keyboard.New(
+		balance.NewManager(addr, logger),
+		discovery.New(name, addr, logger),
+	)
 	fmt.Println("Welcome to your peering relationship!")
-	if err := scanFromKeyboard(manager, discovery); err != nil {
+	if err := kbd.Loop(); err != nil {
 		logger.With("err", err.Error()).Error("error scanning input from keyboard")
 		os.Exit(1)
 	}
-
 }

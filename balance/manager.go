@@ -1,4 +1,4 @@
-package main
+package balance
 
 import (
 	"log/slog"
@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-type manager struct {
+type Manager struct {
 	logger *slog.Logger
 	addr   string
 
@@ -15,8 +15,8 @@ type manager struct {
 	balance int
 }
 
-func newManager(addr string, logger *slog.Logger) *manager {
-	m := &manager{
+func NewManager(addr string, logger *slog.Logger) *Manager {
+	m := &Manager{
 		logger: logger,
 		addr:   addr,
 	}
@@ -24,7 +24,19 @@ func newManager(addr string, logger *slog.Logger) *manager {
 	return m
 }
 
-func (m *manager) keepUpdatingBalance() {
+func (m *Manager) Balance() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.balance
+}
+
+func (m *Manager) Decrease(value int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.balance -= value
+}
+
+func (m *Manager) keepUpdatingBalance() {
 	addr, err := net.ResolveUDPAddr("udp4", m.addr)
 	if err != nil {
 		panic(err)
@@ -52,16 +64,4 @@ func (m *manager) keepUpdatingBalance() {
 		m.balance += int(payment)
 		m.mu.Unlock()
 	}
-}
-
-func (m *manager) Balance() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.balance
-}
-
-func (m *manager) Decrease(value int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.balance -= value
 }
